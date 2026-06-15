@@ -42,14 +42,14 @@ int main() {
     cout << unitbuf;
     cerr << unitbuf;
 
-    vector<string> builtins = {"exit", "echo", "type"};
+    vector<string> builtins = {"exit", "echo", "type" , "pwd"};
 
     while (true) {
         cout << "$ ";
 
         string input;
         if (!getline(cin, input))
-            break;
+            break;  
 
         if (input == "exit") {
             break;
@@ -59,6 +59,10 @@ int main() {
         }
         else if (input.rfind("type ", 0) == 0) {
             typeCommand(input, builtins);
+        }else if(input == "pwd"){
+            char cwd[4096];
+            getcwd(cwd, sizeof(cwd));
+            cout << cwd << '\n';
         }
         else {
           vector<string> tokens;
