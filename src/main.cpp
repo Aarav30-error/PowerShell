@@ -6,9 +6,12 @@ int main() {
   cerr << std::unitbuf;
 
   // TODO: Uncomment the code below to pass the first stage
-  cout << "$ ";
-  string command;
-  cin>>command;
+  while(true){
 
-  cout<< command << ": command not found" <<endl;
+    cout << "$ ";
+    string command;
+    cin>>command;
+  
+    cout<< command << ": command not found" <<endl;
+  }
 }
