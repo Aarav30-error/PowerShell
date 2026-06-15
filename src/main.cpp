@@ -9,10 +9,17 @@ int main() {
   while(true){
 
     cout << "$ ";
-    string command;
-    cin>>command;
-    
-    if(command == "exit") break;
-    cout<< command << ": command not found" <<endl;
+    string input;
+    getline(cin, input);
+        if(input == "exit") break;
+        else if (input.substr(0, 5) == "echo ") {
+        cout << input.substr(5) <<endl;
+        } else {
+        cout << input << ": command not found" <<endl;
+        }
+
   }
-}
+
+
+  }
+
