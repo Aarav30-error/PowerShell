@@ -1,6 +1,6 @@
 #include <bits/stdc++.h>
 #include <unistd.h>
-
+#include <sys/wait.h>
 using namespace std;
 
 void typeCommand(const string& input,
@@ -61,7 +61,49 @@ int main() {
             typeCommand(input, builtins);
         }
         else {
-            cout << input << ": command not found" << '\n';
+          vector<string> tokens;
+
+          istringstream iss(input);
+
+          string token;
+
+          while(iss >> token){
+            tokens.push_back(token);
+          }
+
+          if(tokens.empty()){
+            continue;
+          }
+
+
+          vector<char*> argv;
+
+          for(auto &s : tokens){
+            argv.push_back(const_cast<char*>(s.c_str()));
+          }
+
+          argv.push_back(nullptr);
+
+          pid_t pid = fork();
+
+        
+          
+            if (pid == 0) {
+
+                // Child process
+                execvp(argv[0], argv.data());
+
+                // Only runs if execvp fails
+                cout << input << ": command not found" << '\n';
+                exit(1);
+            }
+            else {
+
+                // Parent process
+                int status;
+                waitpid(pid, &status, 0);
+            }
+            
         }
     }
 
