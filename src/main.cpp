@@ -38,6 +38,37 @@ void typeCommand(const string& input,
     cout << cmd << ": not found" << '\n';
 }
 
+vector<string> tokenize(const string& input) {
+    vector<string> tokens;
+    string current;
+
+    bool inside_quotes = false;
+
+    for (char ch : input) {
+
+        if (ch == '\'') {
+            inside_quotes = !inside_quotes;
+        }
+
+        else if (ch == ' ' && !inside_quotes) {
+
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+        }
+
+        else {
+            current += ch;
+        }
+    }
+
+    if (!current.empty()) {
+        tokens.push_back(current);
+    }
+
+    return tokens;
+}
 int main() {
     cout << unitbuf;
     cerr << unitbuf;
@@ -55,7 +86,14 @@ int main() {
             break;
         }
         else if (input.rfind("echo ", 0) == 0) {
-            cout << input.substr(5) << '\n';
+             vector<string> tokens;
+            tokens = tokenize(input);
+
+            for(int i = 1 ; i<tokens.size() ; i++){
+                cout<<tokens[i]<<" ";
+            }
+
+            cout<<"\n";
         }
         else if (input.rfind("type ", 0) == 0) {
             typeCommand(input, builtins);
@@ -98,17 +136,19 @@ int main() {
                  << ": No such file or directory" << '\n';
             }
         }
-        }
+        }   
         else {
           vector<string> tokens;
 
-          istringstream iss(input);
+        //   istringstream iss(input);
 
-          string token;
+        //   string token;
 
-          while(iss >> token){
-            tokens.push_back(token);
-          }
+        //   while(iss >> token){
+        //     tokens.push_back(token);
+        //   }
+
+        tokens = tokenize(input);
 
           if(tokens.empty()){
             continue;
