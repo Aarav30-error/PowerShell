@@ -64,6 +64,41 @@ int main() {
             getcwd(cwd, sizeof(cwd));
             cout << cwd << '\n';
         }
+        else if (input.rfind("cd ", 0) == 0) {
+
+        istringstream ss(input);
+
+        vector<string> temp;
+
+        string t;
+
+         while (ss >> t) {
+            if (t == "cd")
+            continue;
+
+            temp.push_back(t);
+         }
+
+        if (temp.empty())
+        continue;
+
+         if (temp[0] == "~") {
+
+        char* target_dir = getenv("HOME");
+
+        if (chdir(target_dir) == -1) {
+            cout << "cd: " << temp[0]
+                 << ": No such file or directory" << '\n';
+        }
+
+        } else {
+
+            if (chdir(temp[0].c_str()) == -1) {
+            cout << "cd: " << temp[0]
+                 << ": No such file or directory" << '\n';
+            }
+        }
+        }
         else {
           vector<string> tokens;
 
