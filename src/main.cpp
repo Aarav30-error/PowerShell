@@ -11,10 +11,19 @@ int main() {
     cout << "$ ";
     string input;
     getline(cin, input);
-        if(input == "exit") break;
+
+
+        if(input.substr(0, 5) == "type "){
+          if(input.substr(5,4) == "echo" || input.substr(5,4) == "exit" || input.substr(5,4) == "type"){
+             cout<<input.substr(5,4)<<" "<<"is a shell builtin"<<"\n";
+          }else{
+            cout<<input.substr(5)<< ": not found"<<"\n";
+          }
+        }else if(input == "exit") break;
         else if (input.substr(0, 5) == "echo ") {
         cout << input.substr(5) <<endl;
-        } else {
+        }
+        else {
         cout << input << ": command not found" <<endl;
         }
 
