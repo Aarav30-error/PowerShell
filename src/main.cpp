@@ -49,16 +49,27 @@ vector<string> tokenize(const string& input) {
 
     State state = NORMAL;
 
-    for (char ch : input) {
+    for (int i = 0; i < input.size(); i++) {
+
+        char ch = input[i];
 
         if (state == NORMAL) {
 
             if (ch == '\'') {
                 state = SINGLE;
             }
+
             else if (ch == '"') {
                 state = DOUBLE;
             }
+
+            else if (ch == '\\') {
+
+                if (i + 1 < input.size()) {
+                    current += input[++i];
+                }
+            }
+
             else if (ch == ' ') {
 
                 if (!current.empty()) {
@@ -66,6 +77,7 @@ vector<string> tokenize(const string& input) {
                     current.clear();
                 }
             }
+
             else {
                 current += ch;
             }
@@ -76,6 +88,7 @@ vector<string> tokenize(const string& input) {
             if (ch == '\'') {
                 state = NORMAL;
             }
+
             else {
                 current += ch;
             }
@@ -86,6 +99,29 @@ vector<string> tokenize(const string& input) {
             if (ch == '"') {
                 state = NORMAL;
             }
+
+            else if (ch == '\\') {
+
+                if (i + 1 < input.size()) {
+
+                    char next = input[i + 1];
+
+                    if (next == '"' ||
+                        next == '\\' ||
+                        next == '$') {
+
+                        current += next;
+                        i++;
+                    }
+                    else {
+                        current += ch;
+                    }
+                }
+                else {
+                    current += ch;
+                }
+            }
+
             else {
                 current += ch;
             }
