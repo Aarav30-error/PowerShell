@@ -37,29 +37,58 @@ void typeCommand(const string& input,
 
     cout << cmd << ": not found" << '\n';
 }
-
 vector<string> tokenize(const string& input) {
     vector<string> tokens;
     string current;
 
-    bool inside_quotes = false;
+    enum State {
+        NORMAL,
+        SINGLE,
+        DOUBLE
+    };
+
+    State state = NORMAL;
 
     for (char ch : input) {
 
-        if (ch == '\'') {
-            inside_quotes = !inside_quotes;
-        }
+        if (state == NORMAL) {
 
-        else if (ch == ' ' && !inside_quotes) {
+            if (ch == '\'') {
+                state = SINGLE;
+            }
+            else if (ch == '"') {
+                state = DOUBLE;
+            }
+            else if (ch == ' ') {
 
-            if (!current.empty()) {
-                tokens.push_back(current);
-                current.clear();
+                if (!current.empty()) {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+            }
+            else {
+                current += ch;
             }
         }
 
-        else {
-            current += ch;
+        else if (state == SINGLE) {
+
+            if (ch == '\'') {
+                state = NORMAL;
+            }
+            else {
+                current += ch;
+            }
+        }
+
+        else if (state == DOUBLE) {
+
+            if (ch == '"') {
+                state = NORMAL;
+            }
+            else {
+                current += ch;
+            }
         }
     }
 
@@ -73,7 +102,7 @@ int main() {
     cout << unitbuf;
     cerr << unitbuf;
 
-    vector<string> builtins = {"exit", "echo", "type" , "pwd"};
+    vector<string> builtins = {"exit", "echo", "type" , "pwd" , "cd"};
 
     while (true) {
         cout << "$ ";
@@ -86,7 +115,7 @@ int main() {
             break;
         }
         else if (input.rfind("echo ", 0) == 0) {
-             vector<string> tokens;
+            vector<string> tokens;
             tokens = tokenize(input);
 
             for(int i = 1 ; i<tokens.size() ; i++){
