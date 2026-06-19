@@ -288,17 +288,25 @@ int main() {
         //used for backgroud processing
         else if(input.rfind("jobs" , 0) == 0){
              
-            
-                for (auto &job : jobs) {
+                for (int i = 0; i < (int)jobs.size(); i++) {
 
-                    cout << "[" << job.job_id << "]+  ";
+                        char marker = ' ';
 
-                    cout << left
-                        << setw(24)
-                        << job.status;
+                        if (i == (int)jobs.size() - 1)
+                            marker = '+';
+                        else if (i == (int)jobs.size() - 2)
+                            marker = '-';
 
-                    cout << job.command << '\n';
-                }
+                        cout << "[" << jobs[i].job_id << "]"
+                            << marker
+                            << "  ";
+
+                        cout << left
+                            << setw(24)
+                            << jobs[i].status;
+
+                        cout << jobs[i].command << '\n';
+                    }
         }
         // Built-in: echo
         // Supports output redirection:  echo hello > file.txt
