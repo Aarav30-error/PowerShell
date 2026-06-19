@@ -247,6 +247,7 @@ struct Job {
     int job_id;
     pid_t pid;
     string command;
+    string status;
 };
 // store the background jobs
 vector<Job> jobs;
@@ -287,7 +288,17 @@ int main() {
         //used for backgroud processing
         else if(input.rfind("jobs" , 0) == 0){
              
-            continue;
+            
+                for (auto &job : jobs) {
+
+                    cout << "[" << job.job_id << "]+  ";
+
+                    cout << left
+                        << setw(24)
+                        << job.status;
+
+                    cout << job.command << '\n';
+                }
         }
         // Built-in: echo
         // Supports output redirection:  echo hello > file.txt
@@ -711,7 +722,8 @@ int main() {
                       jobs.push_back({
                                     next_job_id,
                                     pid,
-                                    input
+                                    input,
+                                    "Running"
                                 });
                     cout << "[" << next_job_id << "] "
                         << pid
