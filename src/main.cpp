@@ -91,31 +91,49 @@ vector<string> tokenize(const string& input) {
                     current += input[++i];
                 }
             }
-            else if (ch == '>') {
-                // Redirection operator: flush current token first, then
-                // push ">" as its own token so the parser can detect it.
-                if (!current.empty()) {
-                         if (current == "1") {
-                                tokens.push_back("1>");  //  this is for me to also check 1>
+                else if (ch == '>') {
+
+                        if (!current.empty()) {
+
+                            if (current == "1") {
+
+                                if (i + 1 < input.size() && input[i + 1] == '>') {
+                                    tokens.push_back("1>>");   // apend check stdout
+                                    i++;
+                                    current.clear();
+                                    continue;
+                                }
+
+                                tokens.push_back("1>");      //redirect check
                                 current.clear();
                                 continue;
                             }
-                        else if(current == "2"){
-                                tokens.push_back("2>");  //  this is for me to also check 2>
+
+                            else if (current == "2") {
+
+                                if (i + 1 < input.size() && input[i + 1] == '>') {
+                                    tokens.push_back("2>>");  //apend check stderr
+                                    i++;
+                                    current.clear();
+                                    continue;
+                                }
+
+                                tokens.push_back("2>");  
                                 current.clear();
                                 continue;
+                            }
 
-                             }
+                            tokens.push_back(current);
+                            current.clear();
+                        }
 
-                            
-
-                                tokens.push_back(current);
-                                current.clear();
+                        if (i + 1 < input.size() && input[i + 1] == '>') {
+                            tokens.push_back(">>");
+                            i++;
+                        } else {
+                            tokens.push_back(">");
+                        }
                 }
-                // Peek ahead: if next char is '>' it could be >> (append),
-                // but for now we only handle single > (truncate).
-                tokens.push_back(">");
-            }
             else if (ch == ' ') {
                 // Space: delimiter — push accumulated token if non-empty
                 if (!current.empty()) {
@@ -217,7 +235,8 @@ int main() {
 
             bool redirect_stdout = false;
             bool redirect_stderr = false;
-
+            bool append_stdout = false;
+            bool append_stderr = false;
             vector<string> tokens = tokenize(input);
 
             string outfile;
@@ -226,30 +245,54 @@ int main() {
             vector<string> text_tokens;
 
             // Parse echo arguments and redirection
-            for (int i = 1; i < (int)tokens.size(); i++) {
+                for (int i = 1; i < (int)tokens.size(); i++) {
 
-                if (tokens[i] == ">" || tokens[i] == "1>") {
-                    redirect_stdout = true;
+                    if (tokens[i] == ">" || tokens[i] == "1>") {
 
-                    if (i + 1 < (int)tokens.size()) {
-                        outfile = tokens[i + 1];    //takes output file as the input
+                        redirect_stdout = true;
+
+                        if (i + 1 < (int)tokens.size()) {
+                            outfile = tokens[i + 1];
+                        }
+
+                        break;
                     }
 
-                    break;
-                }
+                    else if (tokens[i] == ">>" || tokens[i] == "1>>") {
 
-                if (tokens[i] == "2>") {
-                    redirect_stderr = true;
+                        append_stdout = true;
 
-                    if (i + 1 < (int)tokens.size()) {
-                        errfile = tokens[i + 1];   // takes errfile input 
+                        if (i + 1 < (int)tokens.size()) {
+                            outfile = tokens[i + 1];
+                        }
+
+                        break;
                     }
 
-                    break;
-                }
+                    else if (tokens[i] == "2>") {
 
-                text_tokens.push_back(tokens[i]);
-            }
+                        redirect_stderr = true;
+
+                        if (i + 1 < (int)tokens.size()) {
+                            errfile = tokens[i + 1];
+                        }
+
+                        break;
+                    }
+
+                    else if (tokens[i] == "2>>") {
+
+                        append_stderr = true;
+
+                        if (i + 1 < (int)tokens.size()) {
+                            errfile = tokens[i + 1];
+                        }
+
+                        break;
+                    }
+
+                    text_tokens.push_back(tokens[i]);
+                }
 
             // stdout redirection
             if (redirect_stdout) {
@@ -289,7 +332,7 @@ int main() {
 
                 int fd = open(
                     errfile.c_str(),
-                    O_WRONLY | O_CREAT | O_TRUNC,
+                    O_WRONLY | O_CREAT | O_TRUNC,  // O_TRUNC erases the previous contents and rewrites the file
                     0644
                 );
 
@@ -310,6 +353,64 @@ int main() {
 
                 cout << '\n';
             }
+            // append check stdout
+            else if(append_stdout){
+                int fd = open(
+                    outfile.c_str(),
+                    O_WRONLY | O_CREAT | O_APPEND,     // O_APPEND  does not rewrite the file but appends to it 
+                    0644
+                );
+
+                if (fd != -1) {
+
+                    string out;
+
+                    for (int i = 0; i < (int)text_tokens.size(); i++) {
+
+                        out += text_tokens[i];
+
+                        if (i + 1 < (int)text_tokens.size()) {
+                            out += " ";
+                        }
+                    }
+
+                    out += '\n';
+
+                    write(fd, out.c_str(), out.size());
+
+                    close(fd);
+                }
+
+            }
+            // append check stderr
+            else if(append_stderr){
+                    
+                // echo produces no stderr
+                // just create/truncate the file
+
+                int fd = open(
+                    errfile.c_str(),
+                    O_WRONLY | O_CREAT | O_APPEND,  // O_TRUNC erases the previous contents and rewrites the file
+                    0644
+                );
+
+                if (fd != -1) {
+                    close(fd);
+                }
+
+                // print normal output to terminal
+
+                for (int i = 0; i < (int)text_tokens.size(); i++) {
+
+                    cout << text_tokens[i];
+
+                    if (i + 1 < (int)text_tokens.size()) {
+                        cout << " ";
+                    }
+                }
+
+                cout << '\n';
+            }   
 
             // normal echo
             else {
@@ -394,32 +495,60 @@ int main() {
 
             bool redirect_stdout = false;
             bool redirect_stderr = false;
+            bool append_stdout = false;
+            bool append_stderr = false;
             string outfile;
             string errfile;
             vector<string> cmd_tokens;  // renamed from text_tokens — holds command + args
 
             // Start at i=0 to include the command name itself in cmd_tokens
-            for (int i = 0; i < (int)tokens.size(); i++) {
+            for (int i =  0; i < (int)tokens.size(); i++) {
 
                 if (tokens[i] == ">" || tokens[i] == "1>") {
+
                     redirect_stdout = true;
+
                     if (i + 1 < (int)tokens.size()) {
                         outfile = tokens[i + 1];
-                        i++;    
                     }
-                    continue;  // don't push > or filename into cmd_tokens
+
+                    break;
                 }
 
-                if (tokens[i] == "2>") {
+                else if (tokens[i] == ">>" || tokens[i] == "1>>") {
+
+                    append_stdout = true;
+
+                    if (i + 1 < (int)tokens.size()) {
+                        outfile = tokens[i + 1];
+                    }
+
+                    break;
+                }
+
+                else if (tokens[i] == "2>") {
+
                     redirect_stderr = true;
+
                     if (i + 1 < (int)tokens.size()) {
                         errfile = tokens[i + 1];
-                        i++;   
                     }
-                    continue;  // don't push 2> or filename into cmd_tokens
+
+                    break;
                 }
 
-                cmd_tokens.push_back(tokens[i]);  // command name and args only
+                else if (tokens[i] == "2>>") {
+
+                    append_stderr = true;
+
+                    if (i + 1 < (int)tokens.size()) {
+                        errfile = tokens[i + 1];
+                    }
+
+                    break;
+                }
+
+                cmd_tokens.push_back(tokens[i]);
             }
 
             if (cmd_tokens.empty()) continue;
@@ -450,6 +579,20 @@ int main() {
                     close(fd);
                 }
 
+                if(append_stdout){
+                    int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+                    if (fd == -1) { perror("open"); exit(1); }
+                    dup2(fd, STDOUT_FILENO);  // fd 1 → output file
+                    close(fd);
+                }
+
+
+                if(append_stderr){
+                    int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+                    if (fd == -1) { perror("open"); exit(1); }
+                    dup2(fd, STDERR_FILENO);  // fd 2 → error file
+                    close(fd);
+                }
                 execvp(argv[0], argv.data());
 
                 // Only reached if execvp failed
