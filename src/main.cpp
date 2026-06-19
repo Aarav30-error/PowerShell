@@ -104,7 +104,16 @@ vector<string> tokenize(const string& input) {
                     current += input[++i];  // ++i moves past the backslash, grabs next char
                 }
             }
-                else if (ch == '>') {
+            else if (ch == '&') {
+
+                if (!current.empty()) {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+
+                tokens.push_back("&");
+            }
+                        else if (ch == '>') {
                         // We've hit a '>' character. Before treating it as a plain
                         // redirect, we need to check if it was actually preceded by
                         // a "1" or "2" (forming "1>" or "2>"), since those mean
@@ -239,9 +248,13 @@ struct Job {
     pid_t pid;
     string command;
 };
+// store the background jobs
+vector<Job> jobs;
+int next_job_id = 1;
 // ---------------------------------------------------------------------------
 // main — REPL (Read-Eval-Print Loop)
 // ---------------------------------------------------------------------------
+
 int main() {
 
     // Flush stdout and stderr after every write so the prompt is always visible
@@ -274,8 +287,6 @@ int main() {
         //used for backgroud processing
         else if(input.rfind("jobs" , 0) == 0){
              
-            // vector<string> tokens = tokenize(input);
-
             continue;
         }
         // Built-in: echo
@@ -559,7 +570,12 @@ int main() {
        else {
             vector<string> tokens = tokenize(input);
             if (tokens.empty()) continue;  // blank/whitespace-only input, nothing to do
+            bool background = false;
 
+            if (!tokens.empty() && tokens.back() == "&") {
+                background = true;
+                tokens.pop_back();
+            }
             bool redirect_stdout = false;
             bool redirect_stderr = false;
             bool append_stdout = false;
@@ -691,8 +707,23 @@ int main() {
                 // pid here is the child's process ID.
                 // We wait for the child to finish before printing the next prompt,
                 // so commands run synchronously (no background jobs in this shell).
-                int status;
-                waitpid(pid, &status, 0);
+                if (background) {
+                      jobs.push_back({
+                                    next_job_id,
+                                    pid,
+                                    input
+                                });
+                    cout << "[" << next_job_id << "] "
+                        << pid
+                        << '\n';
+
+                    next_job_id++;
+                }
+                else {
+
+                    int status;
+                    waitpid(pid, &status, 0);
+                }
             }
             else {
                 // fork() returned a negative number — something went wrong
