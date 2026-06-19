@@ -59,7 +59,8 @@ void typeCommand(const string& input, const vector<string>& builtins) {
 //   - Double quotes  : backslash escapes \", \\, \$ only
 //   - Backslash      : escapes the next character in NORMAL state
 //   - Spaces         : delimiter between tokens in NORMAL state
-//   - >  and  1>     : treated as standalone redirect tokens
+//   - >  and  1>     : treated as standalone redirect tokens   --- stdout fd - 1
+//   - >  and 2>      : treated as error redirection tokens -- stderr - fd - 2
 // ---------------------------------------------------------------------------
 vector<string> tokenize(const string& input) {
 
@@ -99,6 +100,14 @@ vector<string> tokenize(const string& input) {
                                 current.clear();
                                 continue;
                             }
+                        else if(current == "2"){
+                                tokens.push_back("2>");  //  this is for me to also check 2>
+                                current.clear();
+                                continue;
+
+                             }
+
+                            
 
                                 tokens.push_back(current);
                                 current.clear();
@@ -204,65 +213,116 @@ int main() {
         // Supports output redirection:  echo hello > file.txt
         //                               echo hello 1> file.txt
         // ----------------------------------------------------------------
-        else if (input.rfind("echo ", 0) == 0) {
+       else if (input.rfind("echo ", 0) == 0) {
 
-            bool redirect = false;   // Will be set true if > or 1> is found
+            bool redirect_stdout = false;
+            bool redirect_stderr = false;
+
             vector<string> tokens = tokenize(input);
 
-            // Scan tokens to check whether redirection is requested
-            for (const auto& tok : tokens) {
-                if (tok == ">" || tok == "1>") {
-                    redirect = true;
+            string outfile;
+            string errfile;
+
+            vector<string> text_tokens;
+
+            // Parse echo arguments and redirection
+            for (int i = 1; i < (int)tokens.size(); i++) {
+
+                if (tokens[i] == ">" || tokens[i] == "1>") {
+                    redirect_stdout = true;
+
+                    if (i + 1 < (int)tokens.size()) {
+                        outfile = tokens[i + 1];    //takes output file as the input
+                    }
+
                     break;
                 }
+
+                if (tokens[i] == "2>") {
+                    redirect_stderr = true;
+
+                    if (i + 1 < (int)tokens.size()) {
+                        errfile = tokens[i + 1];   // takes errfile input 
+                    }
+
+                    break;
+                }
+
+                text_tokens.push_back(tokens[i]);
             }
 
-            if (redirect) {
-                // ---- echo with redirection --------------------------------
-                vector<string> text_tokens;  // Words to print
-                string outfile;              // Destination filename
-                bool past_redirect = false;  // True once we've seen > / 1>
+            // stdout redirection
+            if (redirect_stdout) {
 
-                for (const auto& tok : tokens) {
-                    if (tok == "echo") continue;          // Skip command name
+                int fd = open(
+                    outfile.c_str(),
+                    O_WRONLY | O_CREAT | O_TRUNC,
+                    0644
+                );
 
-                    if (tok == ">" || tok == "1>") {
-                        past_redirect = true;             // Switch to filename mode
-                        continue;
-                    }
+                if (fd != -1) {
 
-                    if (!past_redirect) {
-                        text_tokens.push_back(tok);       // Collect text args
-                    }
-                    else {
-                        outfile = tok;                    // Only one filename expected
-                    }
-                }
-
-                // Open (or create/truncate) the output file
-                int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd == -1) {
-                    cerr << "echo: " << outfile << ": cannot open file\n";
-                }
-                else {
-                    // Build the output string and write it to the file
                     string out;
+
                     for (int i = 0; i < (int)text_tokens.size(); i++) {
+
                         out += text_tokens[i];
-                        if (i + 1 < (int)text_tokens.size()) out += " ";
+
+                        if (i + 1 < (int)text_tokens.size()) {
+                            out += " ";
+                        }
                     }
+
                     out += '\n';
+
                     write(fd, out.c_str(), out.size());
+
                     close(fd);
                 }
             }
-            else {
-                // ---- Normal echo (no redirection) ------------------------
-                // Print all tokens after "echo", space-separated
-                for (int i = 1; i < (int)tokens.size(); i++) {
-                    cout << tokens[i];
-                    if (i + 1 < (int)tokens.size()) cout << " ";
+
+            // stderr redirection
+            else if (redirect_stderr) {
+
+                // echo produces no stderr
+                // just create/truncate the file
+
+                int fd = open(
+                    errfile.c_str(),
+                    O_WRONLY | O_CREAT | O_TRUNC,
+                    0644
+                );
+
+                if (fd != -1) {
+                    close(fd);
                 }
+
+                // print normal output to terminal
+
+                for (int i = 0; i < (int)text_tokens.size(); i++) {
+
+                    cout << text_tokens[i];
+
+                    if (i + 1 < (int)text_tokens.size()) {
+                        cout << " ";
+                    }
+                }
+
+                cout << '\n';
+            }
+
+            // normal echo
+            else {
+
+                for (int i = 0; i < (int)text_tokens.size(); i++) {
+
+                    cout << text_tokens[i];
+
+                    if (i + 1 < (int)text_tokens.size()) {
+                        cout << " ";
+                    }
+                }
+
                 cout << '\n';
             }
         }
@@ -328,81 +388,86 @@ int main() {
         // External commands  (cat, ls, grep, etc.)
         // Tokenises the input, separates redirection, then fork+exec.
         // ----------------------------------------------------------------
-        else {
-
+       else {
             vector<string> tokens = tokenize(input);
-
             if (tokens.empty()) continue;
 
-            // Separate the command + its arguments from any redirection
-            bool redirect = false;
+            bool redirect_stdout = false;
+            bool redirect_stderr = false;
             string outfile;
-            vector<string> cmd_tokens;
+            string errfile;
+            vector<string> cmd_tokens;  // renamed from text_tokens — holds command + args
 
+            // Start at i=0 to include the command name itself in cmd_tokens
             for (int i = 0; i < (int)tokens.size(); i++) {
 
                 if (tokens[i] == ">" || tokens[i] == "1>") {
-                    // Everything after the redirect symbol is the filename
-                    redirect = true;
+                    redirect_stdout = true;
                     if (i + 1 < (int)tokens.size()) {
                         outfile = tokens[i + 1];
+                        i++;    
                     }
-                    break;   // No further tokens belong to the command args
+                    continue;  // don't push > or filename into cmd_tokens
                 }
 
-                cmd_tokens.push_back(tokens[i]);
+                if (tokens[i] == "2>") {
+                    redirect_stderr = true;
+                    if (i + 1 < (int)tokens.size()) {
+                        errfile = tokens[i + 1];
+                        i++;   
+                    }
+                    continue;  // don't push 2> or filename into cmd_tokens
+                }
+
+                cmd_tokens.push_back(tokens[i]);  // command name and args only
             }
 
-            // Build the argv array that execvp() expects (null-terminated)
+            if (cmd_tokens.empty()) continue;
+
+            // Build null-terminated argv for execvp
             vector<char*> argv;
             for (auto& s : cmd_tokens) {
                 argv.push_back(const_cast<char*>(s.c_str()));
             }
-            argv.push_back(nullptr);    // execvp requires a NULL sentinel
+            argv.push_back(nullptr);
 
-            // Fork a child process to execute the command
             pid_t pid = fork();
 
             if (pid == 0) {
-                // ---- Child process ----------------------------------------
+                // ── CHILD PROCESS ────────────────────────────────────────────
 
-                if (redirect) {
-                    // Redirect stdout to the specified file
-                    int fd = open(
-                        outfile.c_str(),
-                        O_WRONLY | O_CREAT | O_TRUNC,
-                        0644
-                    );
-
-                    if (fd == -1) {
-                        perror("open");
-                        exit(1);
-                    }
-
-                    // Replace file descriptor 1 (stdout) with our file fd
-                    dup2(fd, STDOUT_FILENO);
-                    close(fd);  // Close original fd — dup2 made a copy
+                if (redirect_stdout) {
+                    int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd == -1) { perror("open"); exit(1); }
+                    dup2(fd, STDOUT_FILENO);  // fd 1 → output file
+                    close(fd);
                 }
 
-                // Replace the child process image with the requested command
+                if (redirect_stderr) {
+                    int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd == -1) { perror("open"); exit(1); }
+                    dup2(fd, STDERR_FILENO);  // fd 2 → error file
+                    close(fd);
+                }
+
                 execvp(argv[0], argv.data());
 
-                // execvp only returns if it failed (command not found, etc.)
-                cerr << argv[0] << ": command not found\n";
+                // Only reached if execvp failed
+                if (errno == ENOENT) {
+                    cerr << argv[0] << ": command not found\n";
+                } else {
+                    perror(argv[0]);
+                }
                 exit(1);
             }
             else if (pid > 0) {
-                // ---- Parent process ---------------------------------------
-                // Wait for the child to finish before showing the next prompt
                 int status;
                 waitpid(pid, &status, 0);
             }
             else {
-                // fork() itself failed (very rare)
                 perror("fork");
             }
         }
-
     }   // end while(true)
 
     return 0;
