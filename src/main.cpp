@@ -286,27 +286,71 @@ int main() {
         // ----------------------------------------------------------------
         //Built - in : jobs
         //used for backgroud processing
-        else if(input.rfind("jobs" , 0) == 0){
-             
-                for (int i = 0; i < (int)jobs.size(); i++) {
+        else if (input == "jobs") {
 
-                        char marker = ' ';
+    // First check whether any background job has finished
+            for (auto &job : jobs) {
 
-                        if (i == (int)jobs.size() - 1)
-                            marker = '+';
-                        else if (i == (int)jobs.size() - 2)
-                            marker = '-';
+                int status;
 
-                        cout << "[" << jobs[i].job_id << "]"
-                            << marker
-                            << "  ";
+                pid_t result =
+                    waitpid(job.pid,
+                            &status,
+                            WNOHANG);
 
-                        cout << left
-                            << setw(24)
-                            << jobs[i].status;
+                if (result == job.pid &&
+                    WIFEXITED(status))
+                {
+                    job.status = "Done";
+                }
+            }
 
-                        cout << jobs[i].command << '\n';
+            // Print jobs
+            for (int i = 0; i < (int)jobs.size(); i++) {
+
+                char marker = ' ';
+
+                if (i == (int)jobs.size() - 1)
+                    marker = '+';
+                else if (i == (int)jobs.size() - 2)
+                    marker = '-';
+
+                cout << "[" << jobs[i].job_id << "]"
+                    << marker
+                    << "  ";
+
+                cout << left
+                    << setw(24)
+                    << jobs[i].status;
+
+                if (jobs[i].status == "Running")
+                    cout << jobs[i].command;
+                else {
+                    string cmd = jobs[i].command;
+
+                    if (cmd.size() >= 2 &&
+                        cmd.substr(cmd.size() - 2) == " &")
+                    {
+                        cmd.erase(cmd.size() - 2);
                     }
+
+                    cout << cmd;
+                }
+
+                cout << '\n';
+            }
+
+            // Remove completed jobs after displaying them once
+            jobs.erase(
+                remove_if(
+                    jobs.begin(),
+                    jobs.end(),
+                    [](const Job &job) {
+                        return job.status == "Done";
+                    }
+                ),
+                jobs.end()
+            );
         }
         // Built-in: echo
         // Supports output redirection:  echo hello > file.txt
