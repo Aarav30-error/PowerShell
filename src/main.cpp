@@ -252,6 +252,68 @@ struct Job {
 // store the background jobs
 vector<Job> jobs;
 int next_job_id = 1;
+
+void reapJobs(bool print_done) {
+
+    vector<int> remove_indices;
+
+    for (int i = 0; i < (int)jobs.size(); i++) {
+
+        int status;
+
+        pid_t result =
+            waitpid(jobs[i].pid,
+                    &status,
+                    WNOHANG);
+
+        if (result == jobs[i].pid &&
+            WIFEXITED(status))
+        {
+            jobs[i].status = "Done";
+
+            if (print_done) {
+
+                char marker = '+';
+
+                if ((int)jobs.size() >= 2 &&
+                    i == (int)jobs.size() - 2)
+                {
+                    marker = '-';
+                }
+
+                cout << "[" << jobs[i].job_id << "]"
+                     << marker
+                     << "  ";
+
+                cout << left
+                     << setw(24)
+                     << "Done";
+
+                string cmd = jobs[i].command;
+
+                if (cmd.size() >= 2 &&
+                    cmd.substr(cmd.size() - 2) == " &")
+                {
+                    cmd.erase(cmd.size() - 2);
+                }
+
+                cout << cmd << '\n';
+            }
+
+            remove_indices.push_back(i);
+        }
+    }
+
+    for (int i = (int)remove_indices.size() - 1;
+         i >= 0;
+         i--)
+    {
+        jobs.erase(
+            jobs.begin() +
+            remove_indices[i]
+        );
+    }
+}
 // ---------------------------------------------------------------------------
 // main — REPL (Read-Eval-Print Loop)
 // ---------------------------------------------------------------------------
@@ -267,6 +329,8 @@ int main() {
     vector<string> builtins = { "exit", "echo", "type", "pwd", "cd"  , "jobs" };
 
     while (true) {
+        
+         reapJobs(true);
 
         // Print prompt (no newline, so user types on the same line)
         cout << "$ ";
@@ -287,7 +351,7 @@ int main() {
         //Built - in : jobs
         //used for backgroud processing
         else if (input == "jobs") {
-
+             reapJobs(false);
     // First check whether any background job has finished
             for (auto &job : jobs) {
 
