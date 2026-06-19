@@ -105,70 +105,68 @@ vector<string> tokenize(const string& input) {
                 }
             }
             else if (ch == '&') {
-
                 if (!current.empty()) {
                     tokens.push_back(current);
                     current.clear();
                 }
-
                 tokens.push_back("&");
             }
-                        else if (ch == '>') {
-                        // We've hit a '>' character. Before treating it as a plain
-                        // redirect, we need to check if it was actually preceded by
-                        // a "1" or "2" (forming "1>" or "2>"), since those mean
-                        // "redirect stdout" / "redirect stderr" specifically.
+            else if (ch == '>') {
+                // We've hit a '>' character. Before treating it as a plain
+                // redirect, we need to check if it was actually preceded by
+                // a "1" or "2" (forming "1>" or "2>"), since those mean
+                // "redirect stdout" / "redirect stderr" specifically.
 
-                        if (!current.empty()) {
+                if (!current.empty()) {
 
-                            if (current == "1") {
-                                // current token so far was just "1", and now we see '>'
-                                // so this is actually "1>" (explicit stdout redirect)
+                    if (current == "1") {
+                        // current token so far was just "1", and now we see '>'
+                        // so this is actually "1>" (explicit stdout redirect)
 
-                                if (i + 1 < input.size() && input[i + 1] == '>') {
-                                    // next char is also '>', so it's really "1>>" (append stdout)
-                                    tokens.push_back("1>>");   // apend check stdout
-                                    i++;                       // consume the second '>'
-                                    current.clear();
-                                    continue;
-                                }
-
-                                // just a single '>', so it's "1>" (truncate/overwrite stdout)
-                                tokens.push_back("1>");      //redirect check
-                                current.clear();
-                                continue;
-                            }
-
-                            else if (current == "2") {
-                                // Same idea as above but for stderr ("2>" / "2>>")
-
-                                if (i + 1 < input.size() && input[i + 1] == '>') {
-                                    tokens.push_back("2>>");  //apend check stderr
-                                    i++;
-                                    current.clear();
-                                    continue;
-                                }
-
-                                tokens.push_back("2>");  
-                                current.clear();
-                                continue;
-                            }
-
-                            // current held some other word (not "1" or "2"), so that
-                            // word is a separate token on its own — push it first,
-                            // then we'll still handle the '>' below as a plain redirect.
-                            tokens.push_back(current);
+                        if (i + 1 < (int)input.size() && input[i + 1] == '>') {
+                            // next char is also '>', so it's really "1>>" (append stdout)
+                            tokens.push_back("1>>");   // append check stdout
+                            i++;                       // consume the second '>'
                             current.clear();
+                            continue;
                         }
 
-                        // Plain '>' (no leading digit) — check if it's actually ">>" (append)
-                        if (i + 1 < input.size() && input[i + 1] == '>') {
-                            tokens.push_back(">>");
-                            i++;  // consume the second '>'
-                        } else {
-                            tokens.push_back(">");
+                        // just a single '>', so it's "1>" (truncate/overwrite stdout)
+                        tokens.push_back("1>");      // redirect check
+                        current.clear();
+                        continue;
+                    }
+                    else if (current == "2") {
+                        // Same idea as above but for stderr ("2>" / "2>>")
+
+                        if (i + 1 < (int)input.size() && input[i + 1] == '>') {
+                            tokens.push_back("2>>");  // append check stderr
+                            i++;
+                            current.clear();
+                            continue;
                         }
+
+                        tokens.push_back("2>");
+                        current.clear();
+                        continue;
+                    }
+
+                    // current held some other word (not "1" or "2"), so that
+                    // word is a separate token on its own — push it first,
+                    // then we'll still handle the '>' below as a plain redirect.
+                    tokens.push_back(current);
+                    current.clear();
                 }
+
+                // Plain '>' (no leading digit) — check if it's actually ">>" (append)
+                if (i + 1 < (int)input.size() && input[i + 1] == '>') {
+                    tokens.push_back(">>");
+                    i++;  // consume the second '>'
+                }
+                else {
+                    tokens.push_back(">");
+                }
+            }
             else if (ch == ' ') {
                 // Space: delimiter — push accumulated token if non-empty
                 // (multiple spaces in a row won't create empty tokens because
@@ -242,82 +240,123 @@ vector<string> tokenize(const string& input) {
 
     return tokens;
 }
-//TO manage background jobs
+
+// ---------------------------------------------------------------------------
+// Job management
+// ---------------------------------------------------------------------------
 struct Job {
     int job_id;
     pid_t pid;
     string command;
     string status;
 };
+
 // store the background jobs
 vector<Job> jobs;
 int next_job_id = 1;
 
+// ---------------------------------------------------------------------------
+// computeMarkers
+// Finds the highest and second-highest job_ids in the current jobs list.
+//
+// Marker rules:
+//   '+' -> job with highest job_id
+//   '-' -> job with second-highest job_id
+//   ' ' -> everything else
+// ---------------------------------------------------------------------------
+void computeMarkers(int& max_id, int& second_id) {
+
+    max_id = -1;
+    second_id = -1;
+
+    for (auto& j : jobs) {
+        if (j.job_id > max_id) {
+            second_id = max_id;
+            max_id = j.job_id;
+        }
+        else if (j.job_id > second_id) {
+            second_id = j.job_id;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// reapJobs
+// Checks for finished background jobs via waitpid(WNOHANG).
+//
+// If print_done=true  : prints done jobs (with correct +/- markers, computed
+//                       the same way as the "jobs" builtin) and removes them
+//                       from the list. Used at the top of the REPL loop so
+//                       the user sees completion notices before the next
+//                       prompt (BV8 behavior).
+//
+// If print_done=false : only marks finished jobs as "Done", does NOT print
+//                       or remove them. Used before the "jobs" builtin so
+//                       it can display done jobs inline with running ones
+//                       (RQ2 behavior).
+// ---------------------------------------------------------------------------
 void reapJobs(bool print_done) {
+
+    // First pass: check all running jobs and mark finished ones as "Done"
+    for (int i = 0; i < (int)jobs.size(); i++) {
+        if (jobs[i].status == "Running") {
+            int status;
+            pid_t result = waitpid(jobs[i].pid, &status, WNOHANG);
+            if (result == jobs[i].pid && WIFEXITED(status)) {
+                jobs[i].status = "Done";
+            }
+        }
+    }
+
+    if (!print_done) {
+        return; 
+    }
+
+    // FIX: Compute the +/- markers over the FULL current job list (same as
+    // the "jobs" builtin does) BEFORE we print/remove anything. Doing this
+    // first means a job that is the most-recently-started ("+") still gets
+    // its marker printed correctly when it finishes, matching real shell
+    // behavior and the BV8 expected output ("[2]+  Done ...").
+    int max_id, second_id;
+    computeMarkers(max_id, second_id);
 
     vector<int> remove_indices;
 
     for (int i = 0; i < (int)jobs.size(); i++) {
+        if (jobs[i].status == "Done") {
 
-        int status;
-
-        pid_t result =
-            waitpid(jobs[i].pid,
-                    &status,
-                    WNOHANG);
-
-        if (result == jobs[i].pid &&
-            WIFEXITED(status))
-        {
-            jobs[i].status = "Done";
-
-            if (print_done) {
-
-                char marker = '+';
-
-                if ((int)jobs.size() >= 2 &&
-                    i == (int)jobs.size() - 2)
-                {
-                    marker = '-';
-                }
-
-                cout << "[" << jobs[i].job_id << "]"
-                     << marker
-                     << "  ";
-
-                cout << left
-                     << setw(24)
-                     << "Done";
-
-                string cmd = jobs[i].command;
-
-                if (cmd.size() >= 2 &&
-                    cmd.substr(cmd.size() - 2) == " &")
-                {
-                    cmd.erase(cmd.size() - 2);
-                }
-
-                cout << cmd << '\n';
+            char marker = ' ';
+            if (jobs[i].job_id == max_id) {
+                marker = '+';
             }
+            else if (jobs[i].job_id == second_id) {
+                marker = '-';
+            }
+
+            // Standard format: [JobID]marker  Status  Command
+            cout << "[" << jobs[i].job_id << "]" << marker << "  "
+                 << left << setw(24) << "Done";
+
+            string cmd = jobs[i].command;
+            // Strip the trailing " &" for cleaner display
+            if (cmd.size() >= 2 && cmd.substr(cmd.size() - 2) == " &") {
+                cmd.erase(cmd.size() - 2);
+            }
+            cout << cmd << '\n';
 
             remove_indices.push_back(i);
         }
     }
 
-    for (int i = (int)remove_indices.size() - 1;
-         i >= 0;
-         i--)
-    {
-        jobs.erase(
-            jobs.begin() +
-            remove_indices[i]
-        );
+    // Remove done jobs in reverse order
+    for (int i = (int)remove_indices.size() - 1; i >= 0; i--) {
+        jobs.erase(jobs.begin() + remove_indices[i]);
     }
 }
+
 // ---------------------------------------------------------------------------
 // main — REPL (Read-Eval-Print Loop)
 // ---------------------------------------------------------------------------
-
 int main() {
 
     // Flush stdout and stderr after every write so the prompt is always visible
@@ -326,11 +365,13 @@ int main() {
     cerr << unitbuf;
 
     // List of commands handled directly by the shell (not forked into a child process)
-    vector<string> builtins = { "exit", "echo", "type", "pwd", "cd"  , "jobs" };
+    vector<string> builtins = { "exit", "echo", "type", "pwd", "cd", "jobs" };
 
     while (true) {
-        
-         reapJobs(true);
+
+        // Print and remove any done jobs before showing the prompt
+        // so the user sees completion notices inline (BV8 behavior)
+        reapJobs(true);
 
         // Print prompt (no newline, so user types on the same line)
         cout << "$ ";
@@ -348,85 +389,68 @@ int main() {
         }
 
         // ----------------------------------------------------------------
-        //Built - in : jobs
-        //used for backgroud processing
+        // Built-in: jobs
+        // Used for background processing.
+        // Shows all current jobs (running and done) with correct markers,
+        // then removes done ones from the list.
+        // ----------------------------------------------------------------
         else if (input == "jobs") {
-             reapJobs(false);
-    // First check whether any background job has finished
-            for (auto &job : jobs) {
 
-                int status;
+            // Reap to update statuses (mark done), but don't print or remove yet
+            reapJobs(false);
 
-                pid_t result =
-                    waitpid(job.pid,
-                            &status,
-                            WNOHANG);
+            // Compute markers over the full current list (including done jobs)
+            int max_id, second_id;
+            computeMarkers(max_id, second_id);
 
-                if (result == job.pid &&
-                    WIFEXITED(status))
-                {
-                    job.status = "Done";
-                }
-            }
+            vector<int> to_remove;
 
-            // Print jobs
             for (int i = 0; i < (int)jobs.size(); i++) {
 
                 char marker = ' ';
-
-                if (i == (int)jobs.size() - 1)
+                if (jobs[i].job_id == max_id) {
                     marker = '+';
-                else if (i == (int)jobs.size() - 2)
+                }
+                else if (jobs[i].job_id == second_id) {
                     marker = '-';
-
-                cout << "[" << jobs[i].job_id << "]"
-                    << marker
-                    << "  ";
-
-                cout << left
-                    << setw(24)
-                    << jobs[i].status;
-
-                if (jobs[i].status == "Running")
-                    cout << jobs[i].command;
-                else {
-                    string cmd = jobs[i].command;
-
-                    if (cmd.size() >= 2 &&
-                        cmd.substr(cmd.size() - 2) == " &")
-                    {
-                        cmd.erase(cmd.size() - 2);
-                    }
-
-                    cout << cmd;
                 }
 
-                cout << '\n';
+                string cmd = jobs[i].command;
+
+                if (jobs[i].status == "Done") {
+                    // Strip trailing " &" for done job display
+                    if (cmd.size() >= 2 && cmd.substr(cmd.size() - 2) == " &") {
+                        cmd.erase(cmd.size() - 2);
+                    }
+                    cout << "[" << jobs[i].job_id << "]" << marker << "  ";
+                    cout << left << setw(24) << "Done" << cmd << '\n';
+                    to_remove.push_back(i);  // mark for removal after printing
+                }
+                else {
+                    cout << "[" << jobs[i].job_id << "]" << marker << "  ";
+                    cout << left << setw(24) << jobs[i].status << cmd << '\n';
+                }
             }
 
-            // Remove completed jobs after displaying them once
-            jobs.erase(
-                remove_if(
-                    jobs.begin(),
-                    jobs.end(),
-                    [](const Job &job) {
-                        return job.status == "Done";
-                    }
-                ),
-                jobs.end()
-            );
+            // Remove done jobs in reverse order so indices stay valid
+            for (int i = (int)to_remove.size() - 1; i >= 0; i--) {
+                jobs.erase(jobs.begin() + to_remove[i]);
+            }
         }
+
+        // ----------------------------------------------------------------
         // Built-in: echo
         // Supports output redirection:  echo hello > file.txt
         //                               echo hello 1> file.txt
         // ----------------------------------------------------------------
-       else if (input.rfind("echo ", 0) == 0) {
+        else if (input.rfind("echo ", 0) == 0) {
             // rfind("echo ", 0) == 0 means the string STARTS WITH "echo "
 
             bool redirect_stdout = false;   // true if we saw ">" or "1>" (overwrite)
             bool redirect_stderr = false;   // true if we saw "2>" (overwrite)
-            bool append_stdout = false;     // true if we saw ">>" or "1>>" (append)
-            bool append_stderr = false;     // true if we saw "2>>" (append)
+            bool append_stdout   = false;   // true if we saw ">>" or "1>>" (append)
+            bool append_stderr   = false;   // true if we saw "2>>" (append)
+
             vector<string> tokens = tokenize(input);  // break the line into proper tokens
 
             string outfile;   // filename to write stdout to, if redirecting
@@ -436,87 +460,53 @@ int main() {
 
             // Parse echo arguments and redirection
             // Start at index 1 to skip the "echo" token itself
-                for (int i = 1; i < (int)tokens.size(); i++) {
+            for (int i = 1; i < (int)tokens.size(); i++) {
 
-                    if (tokens[i] == ">" || tokens[i] == "1>") {
-
-                        redirect_stdout = true;
-
-                        // The token right after ">" is the destination filename
-                        if (i + 1 < (int)tokens.size()) {
-                            outfile = tokens[i + 1];
-                        }
-
-                        break;  // stop scanning, everything after this was just the filename
-                    }
-
-                    else if (tokens[i] == ">>" || tokens[i] == "1>>") {
-
-                        append_stdout = true;
-
-                        if (i + 1 < (int)tokens.size()) {
-                            outfile = tokens[i + 1];
-                        }
-
-                        break;
-                    }
-
-                    else if (tokens[i] == "2>") {
-
-                        redirect_stderr = true;
-
-                        if (i + 1 < (int)tokens.size()) {
-                            errfile = tokens[i + 1];
-                        }
-
-                        break;
-                    }
-
-                    else if (tokens[i] == "2>>") {
-
-                        append_stderr = true;
-
-                        if (i + 1 < (int)tokens.size()) {
-                            errfile = tokens[i + 1];
-                        }
-
-                        break;
-                    }
-
+                if (tokens[i] == ">" || tokens[i] == "1>") {
+                    redirect_stdout = true;
+                    // The token right after ">" is the destination filename
+                    if (i + 1 < (int)tokens.size()) outfile = tokens[i + 1];
+                    break;  // stop scanning, everything after this was just the filename
+                }
+                else if (tokens[i] == ">>" || tokens[i] == "1>>") {
+                    append_stdout = true;
+                    if (i + 1 < (int)tokens.size()) outfile = tokens[i + 1];
+                    break;
+                }
+                else if (tokens[i] == "2>") {
+                    redirect_stderr = true;
+                    if (i + 1 < (int)tokens.size()) errfile = tokens[i + 1];
+                    break;
+                }
+                else if (tokens[i] == "2>>") {
+                    append_stderr = true;
+                    if (i + 1 < (int)tokens.size()) errfile = tokens[i + 1];
+                    break;
+                }
+                else {
                     // If it wasn't a redirection token, it's part of the text to print
                     text_tokens.push_back(tokens[i]);
                 }
+            }
 
             // Case 1: stdout redirection requested (echo ... > file  OR  echo ... 1> file)
             if (redirect_stdout) {
 
                 // O_TRUNC = if file exists, erase its contents first (overwrite behavior)
                 // O_CREAT = create the file if it doesn't exist
-                int fd = open(
-                    outfile.c_str(),
-                    O_WRONLY | O_CREAT | O_TRUNC,
-                    0644   // file permissions: rw-r--r--
-                );
+                int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
                 if (fd != -1) {
-
                     // Manually rebuild the "echo" output string, joining words with spaces
                     string out;
-
                     for (int i = 0; i < (int)text_tokens.size(); i++) {
-
                         out += text_tokens[i];
-
-                        if (i + 1 < (int)text_tokens.size()) {
-                            out += " ";  // space between words, but not after the last one
-                        }
+                        if (i + 1 < (int)text_tokens.size()) out += " ";  // space between words, but not after the last one
                     }
-
                     out += '\n';  // echo always ends with a newline
 
                     // Write directly to the file descriptor (bypasses cout, goes to the file)
                     write(fd, out.c_str(), out.size());
-
                     close(fd);
                 }
             }
@@ -524,15 +514,8 @@ int main() {
             // Case 2: stderr redirection requested (echo ... 2> file)
             else if (redirect_stderr) {
 
-                // echo produces no stderr
-                // just create/truncate the file
-
-                int fd = open(
-                    errfile.c_str(),
-                    O_WRONLY | O_CREAT | O_TRUNC,  // O_TRUNC erases the previous contents and rewrites the file
-                    0644
-                );
-
+                // echo produces no stderr — just create/truncate the file
+                int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (fd != -1) {
                     // We open+truncate the error file just to mimic real shell behavior
                     // (the file gets created/emptied even though echo writes nothing to it)
@@ -541,91 +524,55 @@ int main() {
 
                 // Since echo's actual output is on stdout, print it normally to the terminal
                 for (int i = 0; i < (int)text_tokens.size(); i++) {
-
                     cout << text_tokens[i];
-
-                    if (i + 1 < (int)text_tokens.size()) {
-                        cout << " ";
-                    }
+                    if (i + 1 < (int)text_tokens.size()) cout << " ";
                 }
-
                 cout << '\n';
             }
+
             // Case 3: stdout append requested (echo ... >> file  OR  echo ... 1>> file)
-            else if(append_stdout){
-                int fd = open(
-                    outfile.c_str(),
-                    O_WRONLY | O_CREAT | O_APPEND,     // O_APPEND  does not rewrite the file but appends to it 
-                    0644
-                );
+            else if (append_stdout) {
+
+                int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+                // O_APPEND does not rewrite the file but appends to it
 
                 if (fd != -1) {
-
                     string out;
-
                     for (int i = 0; i < (int)text_tokens.size(); i++) {
-
                         out += text_tokens[i];
-
-                        if (i + 1 < (int)text_tokens.size()) {
-                            out += " ";
-                        }
+                        if (i + 1 < (int)text_tokens.size()) out += " ";
                     }
-
                     out += '\n';
-
                     write(fd, out.c_str(), out.size());
-
                     close(fd);
                 }
-
             }
+
             // Case 4: stderr append requested (echo ... 2>> file)
-            else if(append_stderr){
-                    
+            else if (append_stderr) {
+
                 // echo produces no stderr
-                // just create/truncate the file
-                // (comment note: despite saying "truncate" here, O_APPEND below means
-                // the file is created if missing, but NOT truncated if it already exists)
-
-                int fd = open(
-                    errfile.c_str(),
-                    O_WRONLY | O_CREAT | O_APPEND,  // O_TRUNC erases the previous contents and rewrites the file
-                    0644
-                );
-
+                // O_APPEND means the file is created if missing, but NOT truncated
+                int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
                 if (fd != -1) {
                     close(fd);
                 }
 
-                // print normal output to terminal
-                // (again, echo's real output always goes to stdout/terminal here,
-                // since there's nothing for echo to actually send to stderr)
-
+                // echo's real output always goes to stdout/terminal here
+                // since there's nothing for echo to actually send to stderr
                 for (int i = 0; i < (int)text_tokens.size(); i++) {
-
                     cout << text_tokens[i];
-
-                    if (i + 1 < (int)text_tokens.size()) {
-                        cout << " ";
-                    }
+                    if (i + 1 < (int)text_tokens.size()) cout << " ";
                 }
-
                 cout << '\n';
-            }   
+            }
 
             // Case 5: no redirection at all — plain "echo hello world"
             else {
-
                 for (int i = 0; i < (int)text_tokens.size(); i++) {
-
                     cout << text_tokens[i];
-
-                    if (i + 1 < (int)text_tokens.size()) {
-                        cout << " ";
-                    }
+                    if (i + 1 < (int)text_tokens.size()) cout << " ";
                 }
-
                 cout << '\n';
             }
         }
@@ -694,74 +641,54 @@ int main() {
         // External commands  (cat, ls, grep, etc.)
         // Tokenises the input, separates redirection, then fork+exec.
         // ----------------------------------------------------------------
-       else {
+        else {
+
             vector<string> tokens = tokenize(input);
             if (tokens.empty()) continue;  // blank/whitespace-only input, nothing to do
-            bool background = false;
 
+            bool background = false;
             if (!tokens.empty() && tokens.back() == "&") {
                 background = true;
                 tokens.pop_back();
             }
+
             bool redirect_stdout = false;
             bool redirect_stderr = false;
-            bool append_stdout = false;
-            bool append_stderr = false;
+            bool append_stdout   = false;
+            bool append_stderr   = false;
             string outfile;
             string errfile;
-            vector<string> cmd_tokens;  // renamed from text_tokens — holds command + args
+            vector<string> cmd_tokens;  // holds command + args
 
             // Start at i=0 to include the command name itself in cmd_tokens
             // (unlike the echo case above, here token[0] IS part of what we need —
             // it's the program name to execute, e.g. "ls", "cat", etc.)
-            for (int i =  0; i < (int)tokens.size(); i++) {
+            for (int i = 0; i < (int)tokens.size(); i++) {
 
                 if (tokens[i] == ">" || tokens[i] == "1>") {
-
                     redirect_stdout = true;
-
-                    if (i + 1 < (int)tokens.size()) {
-                        outfile = tokens[i + 1];
-                    }
-
+                    if (i + 1 < (int)tokens.size()) outfile = tokens[i + 1];
                     break;
                 }
-
                 else if (tokens[i] == ">>" || tokens[i] == "1>>") {
-
                     append_stdout = true;
-
-                    if (i + 1 < (int)tokens.size()) {
-                        outfile = tokens[i + 1];
-                    }
-
+                    if (i + 1 < (int)tokens.size()) outfile = tokens[i + 1];
                     break;
                 }
-
                 else if (tokens[i] == "2>") {
-
                     redirect_stderr = true;
-
-                    if (i + 1 < (int)tokens.size()) {
-                        errfile = tokens[i + 1];
-                    }
-
+                    if (i + 1 < (int)tokens.size()) errfile = tokens[i + 1];
                     break;
                 }
-
                 else if (tokens[i] == "2>>") {
-
                     append_stderr = true;
-
-                    if (i + 1 < (int)tokens.size()) {
-                        errfile = tokens[i + 1];
-                    }
-
+                    if (i + 1 < (int)tokens.size()) errfile = tokens[i + 1];
                     break;
                 }
-
-                // Not a redirection token — it's part of the command/arguments
-                cmd_tokens.push_back(tokens[i]);
+                else {
+                    // Not a redirection token — it's part of the command/arguments
+                    cmd_tokens.push_back(tokens[i]);
+                }
             }
 
             if (cmd_tokens.empty()) continue;  // safety check, shouldn't normally happen
@@ -800,15 +727,14 @@ int main() {
                     close(fd);
                 }
 
-                if(append_stdout){
+                if (append_stdout) {
                     int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
                     if (fd == -1) { perror("open"); exit(1); }
                     dup2(fd, STDOUT_FILENO);  // fd 1 → output file
                     close(fd);
                 }
 
-
-                if(append_stderr){
+                if (append_stderr) {
                     int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
                     if (fd == -1) { perror("open"); exit(1); }
                     dup2(fd, STDERR_FILENO);  // fd 2 → error file
@@ -823,7 +749,8 @@ int main() {
                 if (errno == ENOENT) {
                     // ENOENT = the executable simply doesn't exist / wasn't found
                     cerr << argv[0] << ": command not found\n";
-                } else {
+                }
+                else {
                     // Some other error (permissions, etc.) — perror prints a description
                     perror(argv[0]);
                 }
@@ -832,23 +759,16 @@ int main() {
             else if (pid > 0) {
                 // ── PARENT PROCESS ───────────────────────────────────────────
                 // pid here is the child's process ID.
-                // We wait for the child to finish before printing the next prompt,
-                // so commands run synchronously (no background jobs in this shell).
-                if (background) {
-                      jobs.push_back({
-                                    next_job_id,
-                                    pid,
-                                    input,
-                                    "Running"
-                                });
-                    cout << "[" << next_job_id << "] "
-                        << pid
-                        << '\n';
 
+                if (background) {
+                    // Register background job and print its job number + PID
+                    jobs.push_back({ next_job_id, pid, input, "Running" });
+                    cout << "[" << next_job_id << "] " << pid << '\n';
                     next_job_id++;
                 }
                 else {
-
+                    // Wait for the child to finish before printing the next prompt
+                    // so commands run synchronously
                     int status;
                     waitpid(pid, &status, 0);
                 }
@@ -859,6 +779,7 @@ int main() {
                 perror("fork");
             }
         }
+
     }   // end while(true)
 
     return 0;
