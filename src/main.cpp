@@ -2,12 +2,13 @@
 // Simple Shell Implementation
 // Supports: echo, type, pwd, cd, exit, and external commands
 // Supports: stdout redirection via > or 1>
+// Supports: pipelines via |
 // ===========================================================================
 
 #include <bits/stdc++.h>
-#include <unistd.h>   // getcwd, chdir, access, execvp, fork
+#include <unistd.h>   // getcwd, chdir, access, execvp, fork, pipe, dup2
 #include <sys/wait.h> // waitpid
-#include <fcntl.h>    // open, O_WRONLY, O_CREAT, O_TRUNC
+#include <fcntl.h>    // open, O_WRONLY, O_CREAT, O_TRUNC, O_APPEND
 using namespace std;
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ void typeCommand(const string& input, const vector<string>& builtins) {
 //   - Spaces         : delimiter between tokens in NORMAL state
 //   - >  and  1>     : treated as standalone redirect tokens   --- stdout fd - 1
 //   - >  and 2>      : treated as error redirection tokens -- stderr - fd - 2
+//   - |              : treated as standalone pipeline token
 // ---------------------------------------------------------------------------
 vector<string> tokenize(const string& input) {
 
@@ -110,6 +112,14 @@ vector<string> tokenize(const string& input) {
                     current.clear();
                 }
                 tokens.push_back("&");
+            }
+            else if (ch == '|') {
+                // Pipeline operator
+                if (!current.empty()) {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+                tokens.push_back("|");
             }
             else if (ch == '>') {
                 // We've hit a '>' character. Before treating it as a plain
@@ -349,6 +359,114 @@ void reapJobs(bool print_done) {
 }
 
 // ---------------------------------------------------------------------------
+// execute_child_command
+// Used exclusively inside piped child processes. Parses local redirects,
+// runs built-ins (printing to standard out/pipe), or execvp's external tools.
+// ---------------------------------------------------------------------------
+void execute_child_command(const vector<string>& tokens, const vector<string>& builtins) {
+    bool redirect_stdout = false, redirect_stderr = false;
+    bool append_stdout = false, append_stderr = false;
+    string outfile, errfile;
+    vector<string> cmd_tokens;
+
+    // Parse redirections
+    for (int i = 0; i < (int)tokens.size(); i++) {
+        if (tokens[i] == ">" || tokens[i] == "1>") {
+            redirect_stdout = true;
+            if (i + 1 < (int)tokens.size()) outfile = tokens[++i];
+        } else if (tokens[i] == ">>" || tokens[i] == "1>>") {
+            append_stdout = true;
+            if (i + 1 < (int)tokens.size()) outfile = tokens[++i];
+        } else if (tokens[i] == "2>") {
+            redirect_stderr = true;
+            if (i + 1 < (int)tokens.size()) errfile = tokens[++i];
+        } else if (tokens[i] == "2>>") {
+            append_stderr = true;
+            if (i + 1 < (int)tokens.size()) errfile = tokens[++i];
+        } else {
+            cmd_tokens.push_back(tokens[i]);
+        }
+    }
+
+    if (cmd_tokens.empty()) exit(0);
+
+    // Apply redirections using dup2
+    if (redirect_stdout) {
+        int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd != -1) { dup2(fd, STDOUT_FILENO); close(fd); }
+        else { perror("open"); exit(1); }
+    }
+    if (append_stdout) {
+        int fd = open(outfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd != -1) { dup2(fd, STDOUT_FILENO); close(fd); }
+        else { perror("open"); exit(1); }
+    }
+    if (redirect_stderr) {
+        int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd != -1) { dup2(fd, STDERR_FILENO); close(fd); }
+        else { perror("open"); exit(1); }
+    }
+    if (append_stderr) {
+        int fd = open(errfile.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd != -1) { dup2(fd, STDERR_FILENO); close(fd); }
+        else { perror("open"); exit(1); }
+    }
+
+    string cmd = cmd_tokens[0];
+
+    // Pipeline-compatible Built-ins
+    if (cmd == "echo") {
+        for (int i = 1; i < (int)cmd_tokens.size(); i++) {
+            cout << cmd_tokens[i] << (i + 1 < (int)cmd_tokens.size() ? " " : "");
+        }
+        cout << '\n';
+        exit(0);
+    } 
+    else if (cmd == "pwd") {
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd)) != nullptr) cout << cwd << '\n';
+        else perror("pwd");
+        exit(0);
+    } 
+    else if (cmd == "type") {
+        string arg = cmd_tokens.size() > 1 ? cmd_tokens[1] : "";
+        if (!arg.empty()) typeCommand("type " + arg, builtins);
+        exit(0);
+    } 
+    else if (cmd == "cd" || cmd == "exit") {
+        exit(0); // Meaningless inside a pipeline child
+    } 
+    else if (cmd == "jobs") {
+        int max_id, second_id;
+        computeMarkers(max_id, second_id);
+        for (int i = 0; i < (int)jobs.size(); i++) {
+            char marker = ' ';
+            if (jobs[i].job_id == max_id) marker = '+';
+            else if (jobs[i].job_id == second_id) marker = '-';
+            
+            string jobcmd = jobs[i].command;
+            if (jobs[i].status == "Done" && jobcmd.size() >= 2 && jobcmd.substr(jobcmd.size() - 2) == " &") {
+                jobcmd.erase(jobcmd.size() - 2);
+            }
+            cout << "[" << jobs[i].job_id << "]" << marker << "  ";
+            cout << left << setw(24) << jobs[i].status << jobcmd << '\n';
+        }
+        exit(0);
+    } 
+    // External commands
+    else {
+        vector<char*> argv;
+        for (auto& s : cmd_tokens) argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        
+        execvp(argv[0], argv.data());
+        if (errno == ENOENT) cerr << argv[0] << ": command not found\n";
+        else perror(argv[0]);
+        exit(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // main — REPL (Read-Eval-Print Loop)
 // ---------------------------------------------------------------------------
 int main() {
@@ -374,6 +492,99 @@ int main() {
         string input;
         if (!getline(cin, input))
             break;  // EOF (Ctrl-D) — exit the shell
+
+        // ----------------------------------------------------------------
+        // NEW: Check for Pipeline Execution
+        // ----------------------------------------------------------------
+        vector<string> all_tokens = tokenize(input);
+        if (all_tokens.empty()) continue;
+
+        bool has_pipe = false;
+        for (const auto& t : all_tokens) {
+            if (t == "|") {
+                has_pipe = true; 
+                break;
+            }
+        }
+
+        if (has_pipe) {
+            bool background = false;
+            if (all_tokens.back() == "&") {
+                background = true;
+                all_tokens.pop_back();
+            }
+
+            // Split into separate commands based on '|'
+            vector<vector<string>> pipeline;
+            vector<string> current_cmd;
+            for (const string& t : all_tokens) {
+                if (t == "|") {
+                    if (!current_cmd.empty()) {
+                        pipeline.push_back(current_cmd);
+                        current_cmd.clear();
+                    }
+                } else {
+                    current_cmd.push_back(t);
+                }
+            }
+            if (!current_cmd.empty()) pipeline.push_back(current_cmd);
+
+            int num_cmds = pipeline.size();
+            
+            // Allocate pipe file descriptors: 2 for each pipe needed
+            vector<int> pipefds(2 * (num_cmds - 1));
+            for (int i = 0; i < num_cmds - 1; i++) {
+                if (pipe(pipefds.data() + 2 * i) == -1) {
+                    perror("pipe");
+                    break;
+                }
+            }
+
+            vector<pid_t> pids;
+            for (int i = 0; i < num_cmds; i++) {
+                pid_t pid = fork();
+                
+                if (pid == 0) { // Child Process
+                    // Hook standard input to previous pipe
+                    if (i > 0) dup2(pipefds[(i - 1) * 2], STDIN_FILENO);
+                    
+                    // Hook standard output to next pipe
+                    if (i < num_cmds - 1) dup2(pipefds[i * 2 + 1], STDOUT_FILENO);
+
+                    // Close ALL pipe fds in child
+                    for (int j = 0; j < 2 * (num_cmds - 1); j++) close(pipefds[j]);
+
+                    // Execute command (builtin or external)
+                    execute_child_command(pipeline[i], builtins);
+                    exit(1); 
+                } 
+                else if (pid > 0) { // Parent Process
+                    pids.push_back(pid);
+                } 
+                else perror("fork");
+            }
+
+            // Close ALL pipe fds in parent
+            for (int i = 0; i < 2 * (num_cmds - 1); i++) close(pipefds[i]);
+
+            if (background) {
+                int assigned_job_id = 1;
+                if (!jobs.empty()) {
+                    int max_id = 0;
+                    for (const auto& j : jobs) if (j.job_id > max_id) max_id = j.job_id;
+                    assigned_job_id = max_id + 1;
+                }
+                jobs.push_back({ assigned_job_id, pids.back(), input, "Running" });
+                cout << "[" << assigned_job_id << "] " << pids.back() << '\n';
+            } else {
+                // Wait for all commands in the pipeline to finish
+                for (pid_t p : pids) {
+                    waitpid(p, nullptr, 0);
+                }
+            }
+            
+            continue; // Skip the rest of the loop, wait for next prompt
+        }
 
         // ----------------------------------------------------------------
         // Built-in: exit
