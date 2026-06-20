@@ -253,7 +253,6 @@ struct Job {
 
 // store the background jobs
 vector<Job> jobs;
-int next_job_id = 1;
 
 // ---------------------------------------------------------------------------
 // computeMarkers
@@ -312,11 +311,6 @@ void reapJobs(bool print_done) {
         return; 
     }
 
-    // FIX: Compute the +/- markers over the FULL current job list (same as
-    // the "jobs" builtin does) BEFORE we print/remove anything. Doing this
-    // first means a job that is the most-recently-started ("+") still gets
-    // its marker printed correctly when it finishes, matching real shell
-    // behavior and the BV8 expected output ("[2]+  Done ...").
     int max_id, second_id;
     computeMarkers(max_id, second_id);
 
@@ -761,10 +755,21 @@ int main() {
                 // pid here is the child's process ID.
 
                 if (background) {
+                    // Calculate the recycled job ID
+                    int assigned_job_id = 1;
+                    if (!jobs.empty()) {
+                        int max_id = 0;
+                        for (const auto& j : jobs) {
+                            if (j.job_id > max_id) {
+                                max_id = j.job_id;
+                            }
+                        }
+                        assigned_job_id = max_id + 1;
+                    }
+
                     // Register background job and print its job number + PID
-                    jobs.push_back({ next_job_id, pid, input, "Running" });
-                    cout << "[" << next_job_id << "] " << pid << '\n';
-                    next_job_id++;
+                    jobs.push_back({ assigned_job_id, pid, input, "Running" });
+                    cout << "[" << assigned_job_id << "] " << pid << '\n';
                 }
                 else {
                     // Wait for the child to finish before printing the next prompt
